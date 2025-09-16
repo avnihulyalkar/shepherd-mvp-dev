@@ -31,6 +31,8 @@ const makeRunId = () =>
     const [input, setInput] = useState("");
     const [waitingForInput, setWaitingForInput] = useState(false);
     const [runStatus, setRunStatus] = useState("Initializing...");
+    const [isSystemThinking, setIsSystemThinking] = useState(true);
+
 
     const messagesEndRef = useRef(null);
     const socketRef = useRef(null);
@@ -69,7 +71,9 @@ const makeRunId = () =>
 
     // ---- message processor (handles tagged envelopes and JSON) ----
     const applyMessage = (text) => {
+        setIsSystemThinking(false);
         if (text) setMessages(prev => [...prev, { from: "system", text }]);
+        setRunStatus("Started"); // Change from Initializing... status once the first message is sent
     };
 
     // Auto-focus input when waiting for user input
@@ -280,6 +284,9 @@ const makeRunId = () =>
                     }
                     else if(repoUrl.toLowerCase().includes("truster")){
                         fetch_url = `${API_BASE}/runs/dvd3/${runId}`;
+                    }
+                    else if(repoUrl.toLowerCase().includes("unstoppable")){
+                        fetch_url = `${API_BASE}/runs/dvd1/${runId}`;
                     } else {
                         throw new Error(`Unsupported repoUrl: ${repoUrl}`);
                     }
@@ -327,7 +334,6 @@ const makeRunId = () =>
                         socket.addEventListener("message", onMessage);
                         socket.addEventListener("error", onError);
                         socket.addEventListener("close", onClose);
-                        setRunStatus("Started"); // Change from Initializing... status
 
                     } else if (result.status === "at_capacity" || result.status === "at capacity" || result.status === "queued" ) {
                         setRunStatus("At capacity");
@@ -404,6 +410,7 @@ const makeRunId = () =>
         socketRef.current?.send(JSON.stringify({ type: "input", data: input }));
         setInput("");
         setWaitingForInput(false);
+        setIsSystemThinking(true);
     };
 
     return (
@@ -429,6 +436,19 @@ const makeRunId = () =>
                     </div>
                 </div>
                 ))}
+                {isSystemThinking && !waitingForInput && (
+                    <div className="flex justify-start">
+                        <div className="px-4 py-2 rounded-lg text-sm bg-[#141414] text-gray-300">
+                            <div className="flex space-x-1 items-center">
+                                <div className="flex space-x-1 ml-2">
+                                    <div className="w-1 h-1 bg-gray-400 rounded-full animate-bounce"></div>
+                                    <div className="w-1 h-1 bg-gray-400 rounded-full animate-bounce" style={{animationDelay: '0.1s'}}></div>
+                                    <div className="w-1 h-1 bg-gray-400 rounded-full animate-bounce" style={{animationDelay: '0.2s'}}></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                )}
                 <div ref={messagesEndRef} />
             </div>
 
