@@ -84,8 +84,10 @@ const makeRunId = () =>
     }, [waitingForInput]);
    
     // calls the cancel api and removes this run from the running state
-    const cancelRun = async () => {
-        try {
+    const cancelRun = async (delayMs = 5000) => {
+        try {            
+            await new Promise(resolve => setTimeout(resolve, delayMs));
+            
             await fetch(`${API_BASE}/runs/${runId}/cancel`, {
                 method: "DELETE",
                 headers: { "Content-Type": "application/json" },
@@ -387,6 +389,7 @@ const makeRunId = () =>
 
         // Check if the last message was asking about running another MAS
         // Cancel the run if the user enters N
+
         const isRunAnotherPrompt = lastMessage && 
             lastMessage.from === "system" && 
             lastMessage.text.toLowerCase().includes("run another mas");
@@ -398,6 +401,8 @@ const makeRunId = () =>
                 // User said N/no or anything else - cancel run
                 // console.log("User declined to run another MAS - canceling run");
                 setMessages(prev => [...prev, { from: "user", text: input }]);
+                console.log("CANCELING");
+                socketRef.current?.send(JSON.stringify({ type: "input", data: input }));
                 setInput("");
                 applyMessage("Session has ended successfully.");
                 cancelRun();
