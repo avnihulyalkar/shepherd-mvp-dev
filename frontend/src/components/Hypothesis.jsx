@@ -289,6 +289,9 @@ const makeRunId = () =>
                     }
                     else if(repoUrl.toLowerCase().includes("unstoppable")){
                         fetch_url = `${API_BASE}/runs/dvd1/${runId}`;
+                    }
+                    else if(repoUrl.toLowerCase().includes("puppet-deploy")){
+                        fetch_url = `${API_BASE}/runs/dvd8/${runId}`;
                     } else {
                         throw new Error(`Unsupported repoUrl: ${repoUrl}`);
                     }
