@@ -1,111 +1,147 @@
-"use client";
-import Link from "next/link";
-import Repositories from "@/components/Repositories";
-import References from "@/components/References";
-import { useEffect, useState, useCallback } from "react";
+'use client';
+
+import { useEffect, useState } from 'react';
+import { useRouter } from 'next/navigation';
+import {
+  useAccount,
+  useConnect,
+  useDisconnect,
+  useChainId,
+  useSignMessage,
+} from 'wagmi';
+import { getAddress } from 'viem';
+import { createSiweMessage } from 'viem/siwe';
 
 export default function Home() {
-  const [showModal, setShowModal] = useState(false);
+  const router = useRouter();
+  const { address, isConnected } = useAccount();
+  const { connectors, connectAsync, isPending } = useConnect();
+  const { disconnect } = useDisconnect();
+  const chainIdFromHook = useChainId();
+  const { signMessageAsync } = useSignMessage();
+  const [signing, setSigning] = useState(false);
 
-  // show on first client render
-  useEffect(() => {
-    setShowModal(true);
-  }, []);
+  const portoConnector =
+    connectors.find((c) => c.id === 'xyz.ithaca.porto') ?? connectors[0];
 
-  // close on Esc
-  const onKeyDown = useCallback((e) => {
-    if (e.key === "Escape") setShowModal(false);
-  }, []);
+  // If already authenticated (server session set), go to /dashboard
   useEffect(() => {
-    if (!showModal) return;
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [showModal, onKeyDown]);
+    (async () => {
+      try {
+        const r = await fetch('/api/me', {
+          cache: 'no-store',
+          credentials: 'same-origin',
+        });
+        if (r.ok) router.replace('/dashboard');
+      } catch {}
+    })();
+  }, [router]);
+
+  async function handleSignIn() {
+    if (signing) return; // prevent double-click nonce races
+    setSigning(true);
+    try {
+      // 1) Connect wallet and capture address/chain
+      let acct = address;
+      let activeChainId = chainIdFromHook;
+
+      if (!acct) {
+        if (!portoConnector) throw new Error('Porto connector not available');
+        const conn = await connectAsync({ connector: portoConnector });
+        acct = conn.account || conn.accounts?.[0];
+        activeChainId = conn.chain?.id ?? activeChainId;
+      }
+      if (!acct || !acct.startsWith('0x') || acct.length !== 42) {
+        throw new Error('No valid wallet address from connector');
+      }
+
+      // Ensure EIP-55 checksum (throws if invalid)
+      acct = getAddress(acct);
+
+      // If chainId is still unknown, query provider
+      if (!activeChainId) {
+        try {
+          const provider = await portoConnector?.getProvider?.();
+          const chainIdHex = await provider?.request?.({ method: 'eth_chainId' });
+          if (chainIdHex) activeChainId = parseInt(chainIdHex, 16);
+        } catch {}
+      }
+      if (!activeChainId) activeChainId = 84532; // Base Sepolia fallback
+
+      // 2) Get nonce (sets httpOnly siwe_nonce cookie)
+      const nonceRes = await fetch('/api/siwe/nonce', {
+        credentials: 'same-origin',
+        cache: 'no-store',
+      });
+      if (!nonceRes.ok) throw new Error('Failed to fetch nonce');
+      const { nonce } = await nonceRes.json();
+
+      // 3) Build SIWE message string with viem (avoids siwe constructor parser issues)
+      const statement = 'Sign in with Ethereum to this app.';
+      const message = createSiweMessage({
+        address: acct,
+        chainId: activeChainId,
+        domain: window.location.hostname, // hostname only (no scheme/port)
+        nonce,
+        uri: window.location.origin,
+        version: '1',
+        statement: statement.replace(/[\r\n]+/g, ' '), // single-line
+      });
+
+      // 4) Sign & verify (server sets httpOnly session cookie)
+      const signature = await signMessageAsync({ message });
+      const verifyRes = await fetch('/api/siwe/verify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify({ message, signature }),
+      });
+
+      if (!verifyRes.ok) {
+        let detail = 'Failed to verify';
+        try {
+          const err = await verifyRes.json();
+          detail = `${err.error}${err.detail ? `: ${err.detail}` : ''}`;
+          console.error('[SIWE verify error]', err);
+        } catch {}
+        throw new Error(detail);
+      }
+
+      // 5) Go to dashboard
+      router.replace('/dashboard');
+    } catch (err) {
+      console.error(err);
+      alert(err.message || 'Sign-in failed');
+    } finally {
+      setSigning(false);
+    }
+  }
 
   return (
-    <div className="bg-black h-full flex flex-col py-8 px-24 space-y-6">
-      <div className="flex flex-col space-y-6">
-        <div className="w-full flex flex-row justify-between items-center">
-          <div className="flex flex-col">
-            <p className="text-md font-semibold">My Repositories</p>
-            <p className="text-[#8f8f8f]">Access all your previous repositories and hypotheses.</p>
-          </div>
-          <Link href="/new-test">
-            <button className="bg-[#df153e] px-4 py-2 rounded-lg hover:scale-105">+</button>
-          </Link>
-        </div>
-        <div className="bg-[#0C0C0C] p-6 border border-[#232323] rounded-lg">
-          <Repositories />
-        </div>
-      </div>
+    <div className="bg-black h-full flex flex-col items-center justify-center gap-4">
+      <button
+        onClick={handleSignIn}
+        disabled={isPending || !portoConnector || signing}
+        className="bg-[#df153e] rounded-full py-4 px-8 disabled:opacity-60"
+      >
+        {isPending || signing ? 'Connecting…' : 'Sign in with Porto'}
+      </button>
 
-      <div className="flex flex-col space-y-6">
-        <div className="w-full flex flex-row justify-between items-center">
-          <div className="flex flex-col">
-            <p className="text-md font-semibold">References</p>
-            <p className="text-[#8f8f8f]">Identify smart contracts with similar vulnerabilities to support your hypothesis.</p>
-          </div>
-          <button className="bg-[#df153e] px-4 py-2 rounded-lg hover:scale-105">+</button>
-        </div>
-        <div className="bg-[#0C0C0C] p-6 border border-[#232323] rounded-lg">
-          <References />
-        </div>
-      </div>
-
-      {/* Modal */}
-      {showModal && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
-          onClick={() => setShowModal(false)}
-          role="dialog"
-          aria-modal="true"
+      {isConnected && (
+        <button
+          onClick={async () => {
+            try {
+              await fetch('/api/siwe/logout', {
+                method: 'POST',
+                credentials: 'same-origin',
+              });
+            } catch {}
+            disconnect();
+          }}
+          className="text-sm text-gray-300 underline"
         >
-          <div
-            className="relative w-full max-w-lg rounded-xl border border-[#232323] bg-[#0C0C0C] p-6 shadow-2xl"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="space-y-3">
-              <p className="text-sm text-gray-200">
-                <span className="text-[#df153e]">
-                  Shepherd is an AI-driven security engine that validates and reproduces smart contract exploits.
-                </span>{" "}
-                Our goal is to give auditors and developers a security copilot that automates setup, execution, and proof of vulnerabilities that normally take hours of manual work.
-              </p>
-              <p className="text-sm text-gray-200">
-                <span className="text-[#df153e]">
-                  Shepherd Alpha
-                </span>{" "}
-                is a guided demo of that system. In this release, Shepherd:
-              </p>
-              <ul className="list-disc text-sm text-gray-200 pl-6">
-                <li>
-                  Spins up an environment for smart contract repos with clean deployment pipelines (e.g., Damn Vulnerable DeFi, NFT/token examples)
-                </li>
-                <li>
-                  Orchestrates attack paths based on known exploit classes
-                </li>
-                <li>
-                  Produces reproducible exploit transcripts auditors can use as PoCs
-                </li>
-              </ul>
-              <p className="text-sm text-gray-200">
-                Auditors today rely on slow manual processes or static tools that can flag issues but can’t execute them end-to-end. Shepherd shows that multi-agent AI can—spinning up the environment, chaining the calls, and proving the exploit in full.
-              </p>
-              <p className="text-sm text-gray-200">
-                Right now, Alpha runs on repos with straightforward initialization. Complex protocols like Uniswap or Compound—where deployment and state setup are heavier—remain the focus of our upcoming Beta, which generalizes Shepherd’s orchestration to production-grade protocols.
-              </p>
-            </div>
-
-            <div className="mt-6 flex justify-center items-center gap-3">
-              <button
-                className="px-4 py-2 rounded-md border border-[#232323] hover:bg-white/5"
-                onClick={() => setShowModal(false)}
-              >
-                Dismiss
-              </button>
-            </div>
-          </div>
-        </div>
+          Disconnect
+        </button>
       )}
     </div>
   );
