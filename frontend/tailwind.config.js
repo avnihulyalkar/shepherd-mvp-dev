@@ -7,7 +7,16 @@ module.exports = {
   theme: {
     extend: {
       fontFamily: {
-        abcwhyte: ['ABCWhyte', 'sans-serif'],
+        abcwhyte: ["ABCWhyte", "sans-serif"],
+      },
+      colors: {
+        primary: "#df153e",
+        "primary-hover": "#c8102e",
+        secondary: "#8f8f8f",
+        "gray-border": "#232323",
+        surface: "#0C0C0C",
+        "surface-hover": "#1A1A1A",
+        helper: "#595959",
       },
     },
   },
